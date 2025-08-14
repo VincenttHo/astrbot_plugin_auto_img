@@ -1,0 +1,7 @@
+name: astrbot_plugin_auto_img
+desc: 自动发送图片插件，让你的bot定时给你发送好看的图片
+help:
+version: v1.0.0
+author: VincenttHo
+repo: https://github.com/VincenttHo/astrbot_plugin_auto_img
+c

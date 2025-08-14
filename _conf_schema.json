@@ -1,0 +1,30 @@
+{
+    "bot_qq": {
+        "description": "机器人的qq号",
+        "type": "string"
+    },
+    "image_size": {
+        "description": "图片质量控制",
+        "type": "string",
+		"options": ["original", "regular", "small", "thumb", "mini"],
+        "default": "original"
+    },
+    "schedule": {
+        "description": "定时任务设置（json），格式请查看github页面文档说明",
+        "type": "string"
+    },
+    "exclude_time": {
+        "description": "排除的时间段，在这个时间段内不会发送图片",
+        "type": "object",
+        "items": {
+            "start_time": {
+                "description": "开始时间，格式HH24:mm",
+                "type": "string"
+            },
+            "end_time": {
+                "description": "结束时间，格式HH24:mm",
+                "type": "string"
+            }
+        }
+    }
+}
