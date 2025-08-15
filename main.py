@@ -4,6 +4,8 @@ from astrbot.api.all import *
 import asyncio
 import json
 from astrbot.api.message_components import Node
+import random
+from astrbot.api.event.filter import command, command_group
 
 
 def is_time_between(start_time_str: str, end_time_str: str) -> bool:
@@ -29,6 +31,11 @@ def is_time_between(start_time_str: str, end_time_str: str) -> bool:
         # 当前时间必须大于等于开始时间，或者小于等于结束时间
         return now_time >= start_time or now_time <= end_time
 
+def get_this_hour_start_time():
+    """获取当前小时的开始时间"""
+    this_hour_start_time_str = datetime.now().strftime("%Y-%m-%d %H:") + "00:00"
+    return datetime.strptime(this_hour_start_time_str, "%Y-%m-%d %H:%M:%S")
+
 @register(
     "astrbot_plugin_auto_img",
     "VincenttHo",
@@ -39,7 +46,7 @@ def is_time_between(start_time_str: str, end_time_str: str) -> bool:
 class PluginAutoImg(Star):
     def __init__(self, context: Context, config: dict):
         super().__init__(context)
-        self.config = config
+        self.config = self.context.get_registered_star("astrbot_plugin_auto_img").config
         self.context = context
 
         # 获取配置
@@ -47,9 +54,10 @@ class PluginAutoImg(Star):
         self.image_size = self.config.get("image_size")
         self.schedule = self.config.get("schedule")
         self.bot_qq = self.config.get("bot_qq")
-        exclude_time = config.get("exclude_time")
+        exclude_time = self.config.get("exclude_time")
         self.exclude_start_time = exclude_time.get("start_time")
         self.exclude_end_time = exclude_time.get("end_time")
+        self.send_img_messages = self.config.get("send_img_messages")
 
         # 定义消息用户类型
         self.user_type = {"FRIEND":"FriendMessage", "GROUP":"GroupMessage"}
@@ -62,7 +70,8 @@ class PluginAutoImg(Star):
         init_time = datetime.now().timestamp()
         schedule_list = json.loads(self.schedule)
         for schedule in schedule_list:
-            schedule["last_activity"] = init_time
+            schedule["last_activity"] = get_this_hour_start_time().timestamp()
+            logger.info(f"[定时图片插件] 已加载定时配置：{schedule}")
         while True:
             if not is_time_between(self.exclude_start_time, self.exclude_end_time):
                 try:
@@ -105,13 +114,20 @@ class PluginAutoImg(Star):
         :param send_forward: 是否用转发格式发送
         """
         lolicon_api = 'https://api.lolicon.app/setu/v2'
+
+        user_id = unified_msg_origin.split(":")[2]
+
         async with aiohttp.ClientSession() as session:
             data = {
                 "size": self.image_size,
                 "excludeAI": True,
                 "r18": r18
             }
+            tag = self.get_user_tags(user_id)
+            if tag:
+                data["tag"] = tag.split("&")
 
+            logger.info(f"入参：{data}")
 
             async with session.post(
                     lolicon_api,
@@ -157,17 +173,54 @@ class PluginAutoImg(Star):
                             self.context.send_message(unified_msg_origin, chain),
                             timeout = timeout_sec
                         )
+                        if self.send_img_messages:
+                            idx = random.randint(0, len(self.send_img_messages)-1)
+                            await self.context.send_message(unified_msg_origin, MessageChain().message(self.send_img_messages[idx]))
                     except asyncio.TimeoutError:
                         # 抛出超时消息
                         raise Exception(f"发送消息给 {unified_msg_origin} 超过时间：{timeout_sec}秒，已跳过。")
                     return
 
-    def shutdown(self):
+    @command_group("auto_img")
+    async def auto_img(self):
+        pass
+
+    @auto_img.command("set_my_tags")
+    async def custom_tags(self, event: AstrMessageEvent, tag: str):
+        logger.info(f"接收到信息：{tag}")
+        sender_id = event.get_group_id()
+        if not sender_id:
+            sender_id = event.get_sender_id()
+        if not self.config.get("custom_tags"):
+            self.config["custom_tags"] = {}
+        self.config.get("custom_tags")[sender_id] = tag
+        self.config.save_config(self.config)
+        yield event.plain_result("成功设置！")
+
+    @auto_img.command("my_tags")
+    async def get_my_tags(self, event: AstrMessageEvent):
+        sender_id = event.get_group_id()
+        if not sender_id:
+            sender_id = event.get_sender_id()
+        yield event.plain_result("你的tag是：" + self.get_user_tags(sender_id))
+
+    @auto_img.command("get")
+    async def get_img(self, event: AstrMessageEvent):
+        try:
+            await self.send_img(event.unified_msg_origin, "2", True)
+        except Exception as e:
+            yield event.plain_result(f"发生错误：{str(e)}")
+
+    @auto_img.command("help")
+    async def help(self, event: AstrMessageEvent):
+        help_message = "命令帮助：\n 1. /auto_img set_my_tags [标签设置] （标签设置可以设置多个，&表示and，|表示or。如：“JK|黑丝&雷姆|拉姆” 请不要带空格） \n2. /auto_img my_tags （我的标签设置） \n3. /auto_img get （根据当前设置获取一张图片）"
+        yield event.plain_result(help_message)
+
+    def get_user_tags(self, user_id):
+        if not self.config.get("custom_tags"):
+            self.config["custom_tags"] = {}
+        return self.config.get("custom_tags").get(user_id, "")
+
+    async def terminate(self):
         self.auto_trigger_task.cancel()
-        logger.info("定时触发任务已取消")
-
-    def __del__(self):
-        self.shutdown()
-
-    def terminate(self):
-        self.shutdown()
+        logger.info("[定时图片插件] 定时触发任务已取消")

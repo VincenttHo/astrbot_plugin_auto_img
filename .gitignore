@@ -1,1 +1,13 @@
+### IntelliJ IDEA ###
 .idea
+*.iws
+*.iml
+*.ipr
+
+### VS Code ###
+.vscode/
+
+### Mac OS ###
+.DS_Store
+pom.xml.versionsBackup
+.flattened-pom.xml

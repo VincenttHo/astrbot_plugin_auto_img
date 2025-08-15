@@ -26,5 +26,9 @@
                 "type": "string"
             }
         }
+    },
+    "send_img_messages": {
+        "description": "发图时的消息词，可维护多个，不维护则不发送",
+        "type": "list"
     }
 }
