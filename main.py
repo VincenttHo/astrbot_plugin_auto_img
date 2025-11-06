@@ -6,6 +6,8 @@ import json
 from astrbot.api.message_components import Node
 import random
 from astrbot.api.event.filter import command, command_group
+from typing import Optional
+import concurrent.futures
 
 
 def is_time_between(start_time_str: str, end_time_str: str) -> bool:
@@ -52,7 +54,8 @@ class PluginAutoImg(Star):
         # 获取配置
         self.send_forward = self.config.get("send_forward")
         self.image_size = self.config.get("image_size")
-        self.schedule = self.config.get("schedule")
+        self.schedule_json_config = self.config.get("schedule")
+        self.schedule_list = json.loads(self.schedule_json_config)
         self.bot_qq = self.config.get("bot_qq")
         exclude_time = self.config.get("exclude_time")
         self.exclude_start_time = exclude_time.get("start_time")
@@ -67,37 +70,33 @@ class PluginAutoImg(Star):
 
     async def _auto_trigger_task(self):
         """ 定时任务 """
-        init_time = datetime.now().timestamp()
-        schedule_list = json.loads(self.schedule)
-        for schedule in schedule_list:
+        for schedule in self.schedule_list:
             schedule["last_activity"] = get_this_hour_start_time().timestamp()
             logger.info(f"[定时图片插件] 已加载定时配置：{schedule}")
         while True:
             if not is_time_between(self.exclude_start_time, self.exclude_end_time):
                 try:
-                    await self.execute(schedule_list)
+                    await self.execute()
                 except Exception as e:
                     logger.error(f"执行定时任务失败，原因：{str(e)}")
             # 间隔10秒检查一次
             await asyncio.sleep(10)
 
-    async def execute(self, schedule_list):
+    async def execute(self):
         """
         定时任务执行逻辑
         :param schedule_list: 定时任务配置数组
         """
-        for schedule in schedule_list:
+        for schedule in self.schedule_list:
             id = schedule.get("id")
             interval_sec = schedule.get("interval_sec")
-            r18 = schedule.get("r18", 0)
-            send_forward = schedule.get("send_forward", False)
 
             time_diff = datetime.now().timestamp() - schedule["last_activity"]
             if time_diff > interval_sec:
                 type = self.user_type[schedule["type"]]
-                unified_msg_origin = f"aiocqhttp:{type}:{id}"
+                unified_msg_origin = f"default:{type}:{id}"
                 try:
-                    await self.send_img(unified_msg_origin, r18, send_forward)
+                    await self.send_img(unified_msg_origin, schedule)
                     schedule["last_activity"] = datetime.now().timestamp()
                 except Exception as e:
                     logger.error(f"定时任务发送{unified_msg_origin}失败，原因：{str(e)}")
@@ -106,14 +105,21 @@ class PluginAutoImg(Star):
                 await asyncio.sleep(5)
 
 
-    async def send_img(self, unified_msg_origin, r18: str, send_forward):
+    async def send_img(self, unified_msg_origin, schedule):
         """
         发送图片
         :param unified_msg_origin: 发送目标用户
         :param r18: 是否发送r18图片
         :param send_forward: 是否用转发格式发送
+        :param show_detail: 是否显示图片详细信息
         """
         lolicon_api = 'https://api.lolicon.app/setu/v2'
+
+        send_forward = schedule.get("send_forward", False)
+        show_detail = schedule.get("show_detail", True)
+        call_ai = schedule.get("call_ai", False)
+        r18 = schedule.get("r18", 0)
+        exclude_tags = schedule.get("exclude_tags", [])
 
         user_id = unified_msg_origin.split(":")[2]
 
@@ -148,6 +154,24 @@ class PluginAutoImg(Star):
                     img_pid = resp["data"][0]["pid"]
                     img_tags = resp["data"][0]["tags"]
 
+                    image_info = f"标题：{img_title}\n作者：{img_author}\nPID：{img_pid}\n标签：{' '.join(f'#{tag}' for tag in (img_tags or []))}"
+
+                    if show_detail:
+                        show_image_detail = image_info
+                    else:
+                        show_image_detail = ""
+
+                    if call_ai:
+                        try:
+                            ai_response = await self.chat_with_ai(image_info)
+                            if show_image_detail == "":
+                                show_image_detail = ai_response
+                            else:
+                                show_image_detail = show_image_detail + "\n" + show_image_detail
+                        except Exception as e:
+                            show_image_detail = show_image_detail
+
+
                     if send_forward:
                         chain = MessageChain([Node(
                             uin=self.bot_qq,
@@ -155,13 +179,12 @@ class PluginAutoImg(Star):
                             content=[
                                 Image.fromURL(img_url),
                                 Plain(
-                                    f"标题：{img_title}\n作者：{img_author}\nPID：{img_pid}\n标签：{' '.join(f'#{tag}' for tag in (img_tags or []))}"
+                                    show_image_detail
                                 ),
                             ],
                         )])
                     else:
-                        chain = MessageChain().url_image(img_url).message(
-                            f"标题：{img_title}\n作者：{img_author}\nPID：{img_pid}\n标签：{' '.join(f'#{tag}' for tag in (img_tags or []))}")
+                        chain = MessageChain().url_image(img_url).message(show_image_detail)
 
 
 
@@ -179,6 +202,10 @@ class PluginAutoImg(Star):
                     except asyncio.TimeoutError:
                         # 抛出超时消息
                         raise Exception(f"发送消息给 {unified_msg_origin} 超过时间：{timeout_sec}秒，已跳过。")
+                    except Exception as e:
+                        # 捕获并处理所有其他的异常
+                        error_msg = f"发送消息给 {unified_msg_origin} 时发生未知错误: {type(e).__name__}: {e}"
+                        logger.error(error_msg, exc_info=True)
                     return
 
     @command_group("auto_img")
@@ -207,7 +234,14 @@ class PluginAutoImg(Star):
     @auto_img.command("get")
     async def get_img(self, event: AstrMessageEvent):
         try:
-            await self.send_img(event.unified_msg_origin, "2", True)
+            logger.info(f"消息发送串：{event.unified_msg_origin}")
+            sender_id = event.get_group_id()
+            if not sender_id:
+                sender_id = event.get_sender_id()
+            for schedule in self.schedule_list:
+                if schedule.get("id", "") == sender_id:
+                    await self.send_img(event.unified_msg_origin, schedule)
+                    break
         except Exception as e:
             yield event.plain_result(f"发生错误：{str(e)}")
 
@@ -220,6 +254,138 @@ class PluginAutoImg(Star):
         if not self.config.get("custom_tags"):
             self.config["custom_tags"] = {}
         return self.config.get("custom_tags").get(user_id, "")
+
+    async def chat_with_ai(self, messages: str) -> Optional[str]:
+        """调用AI接口进行聊天"""
+        try:
+            # 在线程池中运行同步函数
+            loop = asyncio.get_event_loop()
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                result, is_key_error = await loop.run_in_executor(
+                    executor,
+                    lambda: self._sync_chat_with_ai(messages)
+                )
+
+            if result:
+                return result
+            else:
+                # 非密钥错误，直接返回失败
+                return "抱歉，AI服务暂时不可用，请稍后再试"
+
+        except Exception as e:
+            logger.error(f"ai调用: 调用AI接口时发生错误: {str(e)}")
+
+    def _sync_chat_with_ai(self, messages: str) -> tuple[Optional[str], bool]:
+        """同步版本的AI聊天函数，支持完整的消息历史
+
+        Returns:
+            tuple: (response_content, is_key_error)
+            - response_content: AI的回复内容，失败时为None
+        """
+        import requests
+        import json
+
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": "Bearer ff086c5a-6c3b-48f5-8e14-c08d188baae3"
+        }
+
+        system_prompt = "请根据用户提供给你的文字信息，根据标题和标签，用中文说出一句符合情景的淫语。要求：淫语尺度要大。使用第一人称扮演情景里的角色。"
+
+        request_messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": messages}]
+
+        request_body = {
+            "model": "nalang-turbo-v23",
+            "messages": request_messages,
+            "stream": True,
+            "temperature": 0.7,
+            "max_tokens": 800,
+            "top_p": 0.35,
+            "repetition_penalty": 1.05
+        }
+
+        all_content_parts = []
+
+        try:
+            with requests.post("https://www.gpt4novel.com/api/xiaoshuoai/ext/v1/chat/completions", headers=headers, json=request_body, stream=True) as response:
+                # 检查HTTP状态码
+                if response.status_code == 401:
+                    logger.warning(f"ai调用: API密钥认证失败 (401)")
+                    return None, True
+                elif response.status_code == 429:
+                    logger.warning(f"ai调用: API使用次数超限 (429)")
+                    return None, True
+                elif response.status_code == 403:
+                    logger.warning(f"ai调用: API访问被拒绝 (403)")
+                    return None, True
+
+                response.raise_for_status()
+
+                for line_bytes in response.iter_lines():
+                    if line_bytes:
+                        decoded_line = line_bytes.decode('utf-8')
+
+                        if decoded_line.startswith('data: '):
+                            json_data_str = decoded_line[len('data: '):].strip()
+
+                            if not json_data_str:
+                                continue
+
+                            if json_data_str == "[DONE]":
+                                break
+
+                            try:
+                                json_data = json.loads(json_data_str)
+
+                                # 检查是否有错误信息
+                                if "error" in json_data:
+                                    error_info = json_data["error"]
+                                    error_code = error_info.get("code", "")
+                                    error_message = error_info.get("message", "")
+
+                                    # 检查是否是密钥相关错误
+                                    if any(keyword in error_message.lower() for keyword in
+                                           ["quota", "limit", "exceeded", "insufficient", "balance", "credit"]):
+                                        logger.warning(f"ai调用: API密钥使用限制错误: {error_message}")
+                                        return None, True
+                                    elif "invalid" in error_message.lower() and "key" in error_message.lower():
+                                        logger.warning(f"ai调用: API密钥无效错误: {error_message}")
+                                        return None, True
+                                    else:
+                                        logger.error(f"ai调用: API返回错误: {error_message}")
+                                        return None, True
+
+                                if json_data.get("completed"):
+                                    break
+
+                                choices = json_data.get("choices")
+                                if choices and len(choices) > 0:
+                                    delta = choices[0].get("delta")
+                                    if delta and delta.get("content"):
+                                        content_piece = delta["content"]
+                                        all_content_parts.append(content_piece)
+
+                            except json.JSONDecodeError:
+                                if json_data_str.strip():
+                                    logger.warning(f"ai调用: 解析JSON时出错: '{json_data_str}'")
+
+            if all_content_parts:
+                return "".join(all_content_parts), False
+            else:
+                return None, False
+
+        except requests.exceptions.RequestException as e:
+            error_msg = str(e)
+            # 检查是否是密钥相关的网络错误
+            if any(keyword in error_msg.lower() for keyword in ["401", "403", "429", "unauthorized", "forbidden"]):
+                logger.error(f"ai调用: API密钥相关的请求错误: {error_msg}")
+                return None, True
+            else:
+                logger.error(f"ai调用: 网络请求错误: {error_msg}")
+                return None, False
+        except Exception as e:
+            logger.error(f"ai调用: 发生未知错误: {str(e)}")
+            return None, False
 
     async def terminate(self):
         self.auto_trigger_task.cancel()
