@@ -120,6 +120,7 @@ class PluginAutoImg(Star):
         call_ai = schedule.get("call_ai", False)
         r18 = schedule.get("r18", 0)
         exclude_tags = schedule.get("exclude_tags", [])
+        logger.info(f"排除tags:{exclude_tags}")
 
         user_id = unified_msg_origin.split(":")[2]
 
@@ -135,78 +136,99 @@ class PluginAutoImg(Star):
 
             logger.info(f"入参：{data}")
 
-            async with session.post(
-                    lolicon_api,
-                    json=data,
-                    timeout=aiohttp.ClientTimeout(total=120),
-                ) as response:
-                    response.raise_for_status()
-                    resp = await response.json()
+            # 循环调用接口，直到获取到不包含 exclude_tags 的图片
+            max_retries = 10  # 设置最大重试次数，避免无限循环
+            retry_count = 0
+            
+            while retry_count < max_retries:
+                async with session.post(
+                        lolicon_api,
+                        json=data,
+                        timeout=aiohttp.ClientTimeout(total=120),
+                    ) as response:
+                        response.raise_for_status()
+                        resp = await response.json()
 
-                    img_info = resp["data"]
-                    if not img_info:
-                        logger.info("无返回")
-                        return
+                        img_info = resp["data"]
+                        if not img_info:
+                            logger.info("无返回")
+                            return
 
-                    img_url = resp["data"][0]["urls"][self.image_size]
-                    img_title = resp["data"][0]["title"]
-                    img_author = resp["data"][0]["author"]
-                    img_pid = resp["data"][0]["pid"]
-                    img_tags = resp["data"][0]["tags"]
-
-                    image_info = f"标题：{img_title}\n作者：{img_author}\nPID：{img_pid}\n标签：{' '.join(f'#{tag}' for tag in (img_tags or []))}"
-
-                    if show_detail:
-                        show_image_detail = image_info
-                    else:
-                        show_image_detail = ""
-
-                    if call_ai:
-                        try:
-                            ai_response = await self.chat_with_ai(image_info)
-                            if show_image_detail == "":
-                                show_image_detail = ai_response
-                            else:
-                                show_image_detail = show_image_detail + "\n" + show_image_detail
-                        except Exception as e:
-                            show_image_detail = show_image_detail
-
-
-                    if send_forward:
-                        chain = MessageChain([Node(
-                            uin=self.bot_qq,
-                            name="AutoImg",
-                            content=[
-                                Image.fromURL(img_url),
-                                Plain(
-                                    show_image_detail
-                                ),
-                            ],
-                        )])
-                    else:
-                        chain = MessageChain().url_image(img_url).message(show_image_detail)
-
-
-
-                    # 使用 asyncio.wait_for 添加超时控制
-                    # 设置90秒超时
-                    timeout_sec = 90
-                    try:
-                        await asyncio.wait_for(
-                            self.context.send_message(unified_msg_origin, chain),
-                            timeout = timeout_sec
+                        img_tags = resp["data"][0]["tags"]
+                        # 检查是否包含排除的标签（模糊匹配）
+                        has_excluded_tag = any(
+                            any(excluded_tag in img_tag for img_tag in img_tags)
+                            for excluded_tag in exclude_tags
                         )
-                        if self.send_img_messages:
-                            idx = random.randint(0, len(self.send_img_messages)-1)
-                            await self.context.send_message(unified_msg_origin, MessageChain().message(self.send_img_messages[idx]))
-                    except asyncio.TimeoutError:
-                        # 抛出超时消息
-                        raise Exception(f"发送消息给 {unified_msg_origin} 超过时间：{timeout_sec}秒，已跳过。")
-                    except Exception as e:
-                        # 捕获并处理所有其他的异常
-                        error_msg = f"发送消息给 {unified_msg_origin} 时发生未知错误: {type(e).__name__}: {e}"
-                        logger.error(error_msg, exc_info=True)
-                    return
+                        
+                        if has_excluded_tag:
+                            retry_count += 1
+                            logger.info(f"图片包含排除标签，重新获取... (第 {retry_count} 次)")
+                            continue
+                        
+                        # 如果没有排除标签，继续处理
+                        img_url = resp["data"][0]["urls"][self.image_size]
+                        img_title = resp["data"][0]["title"]
+                        img_author = resp["data"][0]["author"]
+                        img_pid = resp["data"][0]["pid"]
+
+                        image_info = f"标题：{img_title}\n作者：{img_author}\nPID：{img_pid}\n标签：{' '.join(f'#{tag}' for tag in (img_tags or []))}"
+
+                        if show_detail:
+                            show_image_detail = image_info
+                        else:
+                            show_image_detail = ""
+
+                        if call_ai:
+                            try:
+                                ai_response = await self.chat_with_ai(image_info)
+                                if show_image_detail == "":
+                                    show_image_detail = ai_response
+                                else:
+                                    show_image_detail = show_image_detail + "\n" + ai_response
+                            except Exception as e:
+                                show_image_detail = show_image_detail
+
+
+                        if send_forward:
+                            chain = MessageChain([Node(
+                                uin=self.bot_qq,
+                                name="AutoImg",
+                                content=[
+                                    Image.fromURL(img_url),
+                                    Plain(
+                                        show_image_detail
+                                    ),
+                                ],
+                            )])
+                        else:
+                            chain = MessageChain().url_image(img_url).message(show_image_detail)
+
+
+
+                        # 使用 asyncio.wait_for 添加超时控制
+                        # 设置90秒超时
+                        timeout_sec = 90
+                        try:
+                            await asyncio.wait_for(
+                                self.context.send_message(unified_msg_origin, chain),
+                                timeout = timeout_sec
+                            )
+                            if self.send_img_messages:
+                                idx = random.randint(0, len(self.send_img_messages)-1)
+                                await self.context.send_message(unified_msg_origin, MessageChain().message(self.send_img_messages[idx]))
+                        except asyncio.TimeoutError:
+                            # 抛出超时消息
+                            raise Exception(f"发送消息给 {unified_msg_origin} 超过时间：{timeout_sec}秒，已跳过。")
+                        except Exception as e:
+                            # 捕获并处理所有其他的异常
+                            error_msg = f"发送消息给 {unified_msg_origin} 时发生未知错误: {type(e).__name__}: {e}"
+                            logger.error(error_msg, exc_info=True)
+                        return
+            
+            # 如果达到最大重试次数仍未找到合适的图片
+            logger.warning(f"已重试 {max_retries} 次，仍未找到不包含排除标签的图片")
+            return
 
     @command_group("auto_img")
     async def auto_img(self):
