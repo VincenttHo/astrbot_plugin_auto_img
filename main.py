@@ -61,6 +61,7 @@ class PluginAutoImg(Star):
         self.exclude_start_time = exclude_time.get("start_time")
         self.exclude_end_time = exclude_time.get("end_time")
         self.send_img_messages = self.config.get("send_img_messages")
+        self.proxy = self.config.get("proxy")
 
         # 定义消息用户类型
         self.user_type = {"FRIEND":"FriendMessage", "GROUP":"GroupMessage"}
@@ -109,9 +110,77 @@ class PluginAutoImg(Star):
         """
         发送图片
         :param unified_msg_origin: 发送目标用户
-        :param r18: 是否发送r18图片
-        :param send_forward: 是否用转发格式发送
-        :param show_detail: 是否显示图片详细信息
+        :param schedule: 调度配置
+        """
+        # 从schedule配置中获取API类型，默认使用lolicon
+        api_type = schedule.get("api_type", "lolicon")
+        
+        # 根据配置选择API
+        if api_type == "alcy":
+            await self.send_img_alcy(unified_msg_origin, schedule)
+        else:
+            await self.send_img_lolicon(unified_msg_origin, schedule)
+
+    async def send_img_alcy(self, unified_msg_origin, schedule):
+        """
+        使用alcy API发送图片
+        :param unified_msg_origin: 发送目标用户
+        :param schedule: 调度配置
+        """
+        alcy_api = 'https://t.alcy.cc/json'
+
+        send_forward = schedule.get("send_forward", False)
+        category = schedule.get("category", "pc")  # 图片分类
+        count = schedule.get("count", 1)  # 获取数量
+
+        async with aiohttp.ClientSession() as session:
+            # 构建请求URL
+            url = f"{alcy_api}?{category}={count}"
+            logger.info(f"请求URL：{url}")
+
+            try:
+                async with session.get(
+                    url,
+                    timeout=aiohttp.ClientTimeout(total=120),
+                ) as response:
+                    response.raise_for_status()
+                    resp = await response.json()
+
+                    if resp.get("code") != 200:
+                        logger.error(f"API返回错误：{resp}")
+                        return
+
+                    data = resp.get("data")
+                    if not data:
+                        logger.info("无返回数据")
+                        return
+
+                    # 处理单条或多条数据
+                    if isinstance(data, dict):
+                        # 单条数据
+                        img_url = data.get("link")
+                        await self._send_single_image(unified_msg_origin, img_url, "", send_forward)
+                    elif isinstance(data, list):
+                        # 多条数据
+                        for item in data:
+                            img_url = item.get("link")
+                            await self._send_single_image(unified_msg_origin, img_url, "", send_forward)
+                            await asyncio.sleep(2)  # 多张图片之间间隔2秒
+
+                    # 发送附加消息
+                    if self.send_img_messages:
+                        idx = random.randint(0, len(self.send_img_messages)-1)
+                        await self.context.send_message(unified_msg_origin, MessageChain().message(self.send_img_messages[idx]))
+
+            except Exception as e:
+                logger.error(f"alcy API调用失败：{str(e)}")
+                raise
+
+    async def send_img_lolicon(self, unified_msg_origin, schedule):
+        """
+        使用lolicon API发送图片（原有逻辑）
+        :param unified_msg_origin: 发送目标用户
+        :param schedule: 调度配置
         """
         lolicon_api = 'https://api.lolicon.app/setu/v2'
 
@@ -128,7 +197,8 @@ class PluginAutoImg(Star):
             data = {
                 "size": self.image_size,
                 "excludeAI": True,
-                "r18": r18
+                "r18": r18,
+                "proxy": self.proxy
             }
             tag = self.get_user_tags(user_id)
             if tag:
@@ -190,45 +260,54 @@ class PluginAutoImg(Star):
                                 show_image_detail = show_image_detail
 
 
-                        if send_forward:
-                            chain = MessageChain([Node(
-                                uin=self.bot_qq,
-                                name="AutoImg",
-                                content=[
-                                    Image.fromURL(img_url),
-                                    Plain(
-                                        show_image_detail
-                                    ),
-                                ],
-                            )])
-                        else:
-                            chain = MessageChain().url_image(img_url).message(show_image_detail)
+                        await self._send_single_image(unified_msg_origin, img_url, show_image_detail, send_forward)
 
-
-
-                        # 使用 asyncio.wait_for 添加超时控制
-                        # 设置90秒超时
-                        timeout_sec = 90
-                        try:
-                            await asyncio.wait_for(
-                                self.context.send_message(unified_msg_origin, chain),
-                                timeout = timeout_sec
-                            )
-                            if self.send_img_messages:
-                                idx = random.randint(0, len(self.send_img_messages)-1)
-                                await self.context.send_message(unified_msg_origin, MessageChain().message(self.send_img_messages[idx]))
-                        except asyncio.TimeoutError:
-                            # 抛出超时消息
-                            raise Exception(f"发送消息给 {unified_msg_origin} 超过时间：{timeout_sec}秒，已跳过。")
-                        except Exception as e:
-                            # 捕获并处理所有其他的异常
-                            error_msg = f"发送消息给 {unified_msg_origin} 时发生未知错误: {type(e).__name__}: {e}"
-                            logger.error(error_msg, exc_info=True)
+                        # 发送附加消息
+                        if self.send_img_messages:
+                            idx = random.randint(0, len(self.send_img_messages)-1)
+                            await self.context.send_message(unified_msg_origin, MessageChain().message(self.send_img_messages[idx]))
                         return
             
             # 如果达到最大重试次数仍未找到合适的图片
             logger.warning(f"已重试 {max_retries} 次，仍未找到不包含排除标签的图片")
             return
+
+    async def _send_single_image(self, unified_msg_origin, img_url, detail_text, send_forward):
+        """
+        发送单张图片的通用方法
+        :param unified_msg_origin: 发送目标
+        :param img_url: 图片URL
+        :param detail_text: 详细信息文本
+        :param send_forward: 是否使用转发格式
+        """
+        if send_forward:
+            chain = MessageChain([Node(
+                uin=self.bot_qq,
+                name="AutoImg",
+                content=[
+                    Image.fromURL(img_url),
+                    Plain(detail_text) if detail_text else Plain(""),
+                ],
+            )])
+        else:
+            if detail_text:
+                chain = MessageChain().url_image(img_url).message(detail_text)
+            else:
+                chain = MessageChain().url_image(img_url)
+
+        # 使用 asyncio.wait_for 添加超时控制
+        timeout_sec = 90
+        try:
+            await asyncio.wait_for(
+                self.context.send_message(unified_msg_origin, chain),
+                timeout=timeout_sec
+            )
+        except asyncio.TimeoutError:
+            raise Exception(f"发送消息给 {unified_msg_origin} 超过时间：{timeout_sec}秒，已跳过。")
+        except Exception as e:
+            error_msg = f"发送消息给 {unified_msg_origin} 时发生未知错误: {type(e).__name__}: {e}"
+            logger.error(error_msg, exc_info=True)
+            raise
 
     @command_group("auto_img")
     async def auto_img(self):

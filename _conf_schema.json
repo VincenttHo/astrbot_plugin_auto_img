@@ -4,13 +4,13 @@
         "type": "string"
     },
     "image_size": {
-        "description": "图片质量控制",
+        "description": "图片质量控制（仅lolicon API有效）",
         "type": "string",
 		"options": ["original", "regular", "small", "thumb", "mini"],
         "default": "original"
     },
     "schedule": {
-        "description": "定时任务设置（json），格式请查看github页面文档说明",
+        "description": "定时任务设置（json），每个任务可以单独设置api_type（lolicon或alcy），格式请查看github页面文档说明",
         "type": "string"
     },
     "exclude_time": {
@@ -30,5 +30,10 @@
     "send_img_messages": {
         "description": "发图时的消息词，可维护多个，不维护则不发送",
         "type": "list"
+    },
+    "proxy": {
+        "description": "反代地址设置",
+        "type": "string",
+        "default": "i.pixiv.re"
     }
 }
