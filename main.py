@@ -42,7 +42,7 @@ def get_this_hour_start_time():
     "astrbot_plugin_auto_img",
     "VincenttHo",
     "自动发图插件,让你的bot定时给群或私聊发送图片",
-    "1.0.0",
+    "1.1.0",
     "https://github.com/VincenttHo/astrbot_plugin_auto_img",
 )
 class PluginAutoImg(Star):
