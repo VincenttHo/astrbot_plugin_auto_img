@@ -1,7 +1,7 @@
 {
   "bot_qq": "你的机器人QQ号",
   "image_size": "original",
-  "schedule": "[{\"id\":\"123456789\",\"type\":\"GROUP\",\"api_type\":\"lolicon\",\"interval_sec\":3600,\"send_forward\":false,\"show_detail\":true,\"call_ai\":false,\"r18\":0,\"exclude_tags\":[]},{\"id\":\"987654321\",\"type\":\"GROUP\",\"api_type\":\"alcy\",\"interval_sec\":7200,\"send_forward\":false,\"category\":\"pc\",\"count\":2}]",
+  "schedule": "[{\"id\":\"123456789\",\"type\":\"GROUP\",\"api_type\":\"lolicon\",\"interval_sec\":3600,\"send_forward\":false,\"detail_mode\":\"brief\",\"call_ai\":false,\"r18\":0,\"exclude_tags\":[]},{\"id\":\"987654321\",\"type\":\"GROUP\",\"api_type\":\"alcy\",\"interval_sec\":7200,\"send_forward\":false,\"category\":\"pc\",\"count\":2}]",
   "exclude_time": {
     "start_time": "23:00",
     "end_time": "07:00"

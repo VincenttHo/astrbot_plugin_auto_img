@@ -10,7 +10,7 @@
         "default": "original"
     },
     "schedule": {
-        "description": "定时任务设置（json），每个任务可以单独设置api_type（lolicon或alcy），格式请查看github页面文档说明",
+        "description": "定时任务设置（json），每个任务可以单独设置api_type（lolicon或alcy）。lolicon可通过detail_mode设置显示模式：full完整、brief简略、none不显示详情，格式请查看github页面文档说明",
         "type": "string"
     },
     "exclude_time": {

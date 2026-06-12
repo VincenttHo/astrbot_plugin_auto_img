@@ -185,6 +185,7 @@ class PluginAutoImg(Star):
         lolicon_api = 'https://api.lolicon.app/setu/v2'
 
         send_forward = schedule.get("send_forward", False)
+        detail_mode = schedule.get("detail_mode")
         show_detail = schedule.get("show_detail", True)
         call_ai = schedule.get("call_ai", False)
         r18 = schedule.get("r18", 0)
@@ -242,16 +243,18 @@ class PluginAutoImg(Star):
                         img_author = resp["data"][0]["author"]
                         img_pid = resp["data"][0]["pid"]
 
-                        image_info = f"标题：{img_title}\n作者：{img_author}\nPID：{img_pid}\n标签：{' '.join(f'#{tag}' for tag in (img_tags or []))}"
+                        full_image_info = f"标题：{img_title}\n作者：{img_author}\nPID：{img_pid}\n标签：{' '.join(f'#{tag}' for tag in (img_tags or []))}"
+                        brief_image_info = f"标题：{img_title}\n作者：{img_author}\nPID：{img_pid}"
+                        show_image_detail = self._build_lolicon_detail_text(
+                            detail_mode,
+                            show_detail,
+                            full_image_info,
+                            brief_image_info,
+                        )
 
-                        if show_detail:
-                            show_image_detail = image_info
-                        else:
-                            show_image_detail = ""
-
-                        if call_ai:
+                        if call_ai and not self._is_brief_detail_mode(detail_mode):
                             try:
-                                ai_response = await self.chat_with_ai(image_info)
+                                ai_response = await self.chat_with_ai(full_image_info)
                                 if show_image_detail == "":
                                     show_image_detail = ai_response
                                 else:
@@ -271,6 +274,24 @@ class PluginAutoImg(Star):
             # 如果达到最大重试次数仍未找到合适的图片
             logger.warning(f"已重试 {max_retries} 次，仍未找到不包含排除标签的图片")
             return
+
+    def _build_lolicon_detail_text(self, detail_mode, show_detail, full_image_info, brief_image_info):
+        """
+        根据配置生成lolicon图片信息文本。
+        detail_mode优先级高于旧的show_detail配置，以保持向后兼容。
+        """
+        if detail_mode is None:
+            return full_image_info if show_detail else ""
+
+        mode = str(detail_mode).lower()
+        if mode in ("brief", "simple"):
+            return brief_image_info
+        if mode in ("none", "off", "false"):
+            return ""
+        return full_image_info
+
+    def _is_brief_detail_mode(self, detail_mode):
+        return str(detail_mode).lower() in ("brief", "simple")
 
     async def _send_single_image(self, unified_msg_origin, img_url, detail_text, send_forward):
         """

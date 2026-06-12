@@ -37,7 +37,7 @@
     "api_type": "lolicon",
     "interval_sec": 3600,
     "send_forward": false,
-    "show_detail": true,
+    "detail_mode": "full",
     "call_ai": false,
     "r18": 0,
     "exclude_tags": ["标签1", "标签2"]
@@ -51,7 +51,7 @@
 - `api_type`: API类型，设置为 `lolicon`（不设置时默认为lolicon）
 - `interval_sec`: 发送间隔（秒）
 - `send_forward`: 是否使用转发消息格式
-- `show_detail`: 是否显示图片详细信息（标题、作者、PID、标签）
+- `detail_mode`: 图片信息显示模式，`full` 完整显示（标题、作者、PID、标签），`brief` 简略显示（标题、作者、PID），`none` 不显示详情；旧配置 `show_detail` 仍然兼容
 - `call_ai`: 是否调用AI生成评论
 - `r18`: R18等级（0=非R18, 1=R18, 2=混合）
 - `exclude_tags`: 排除的标签列表
@@ -93,7 +93,7 @@
     "api_type": "lolicon",
     "interval_sec": 3600,
     "r18": 0,
-    "show_detail": true
+    "detail_mode": "brief"
   },
   {
     "id": "987654321",
@@ -131,9 +131,10 @@
 
 - 两种API可以在不同的定时任务中混合使用，每个任务通过 `api_type` 字段单独指定
 - 如果不设置 `api_type` 字段，默认使用 lolicon API
-- lolicon API的参数（如r18、show_detail、call_ai、exclude_tags）在使用alcy API时不生效
+- lolicon API的参数（如r18、detail_mode、call_ai、exclude_tags）在使用alcy API时不生效
 - alcy API的参数（如category、count）在使用lolicon API时不生效
 - 建议根据实际需求为每个用户选择合适的API
+- `detail_mode` 设置为 `brief` 时只会显示标题、作者、PID，即使 `call_ai` 为 `true` 也不会追加AI评论
 
 ## 配置示例文件
 
